@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Compare agents in SentinelOne | ConnectWise RMM | Domain OU for reconciliation. Searching for mismatches.
+    Uses the API to compare agents in SentinelOne and ConnectWise RMM for reconciliation. Searching for mismatches.
 
 .DESCRIPTION
     S1 → grabs all computers from a site using the API
@@ -8,7 +8,8 @@
     Domain → PowerShell on the DC - Last checkin-in within 30 days
 
 .REQUIREMENTS
-    Requires CW RMM API Key to have devices.read, companies.read, and asset.read rights.
+    SentinelOne API key
+    Requires CW RMM API key to have devices.read, companies.read, and asset.read rights.
     $baseURL must be adjusted to unique console URL. Line 77 and 40.
 
 .NOTES
@@ -140,28 +141,6 @@ function Get-RMMDevices {
     }
 }
 
-function Get-DomainComputers {
-    param (
-        [string]$SearchBase = "",
-        [int]$Days = 30
-    )
-    try {
-        Import-Module ActiveDirectory -ErrorAction Stop
-
-        $cutoff = (Get-Date).AddDays(-$Days)
-
-        $computers = Get-ADComputer -Filter * -SearchBase $SearchBase -Properties Name, LastLogonDate |
-        Where-Object { $_.LastLogonDate -gt $cutoff } |
-        Select-Object -ExpandProperty Name
-
-        return , $computers
-    }
-    catch {
-        Write-Output "Failed to retrieve recently active computers: $_"
-        return @()
-    }
-}
-
 function Compare-ComputerLists {
     $domainComputers = $domainComputers | ForEach-Object { if ($_ -ne $null) { $_.ToUpper() } }
     $SentinelOneList = $SentinelOneList | ForEach-Object { if ($_ -ne $null) { $_.ToUpper() } }
@@ -181,24 +160,13 @@ if (-not $SentinelOneList) {
     Write-Output "Sentinel One device list is empty."
 }
 
-$domainComputers = Get-DomainComputers
-if ($domainComputers -contains "Failed") {
-    Write-Output "Domain computer list is empty."
-}
-
 $rmmComputers = Get-RMMDevices -RMMApiSecretSecure $RMMApiSecret
 if (-not $rmmComputers) {
     Write-Output "CW RMM computer list is empty."
 }
 
 # Comparing the lists above
-$result = Compare-ComputerLists -rmmComputers $rmmComputers -domainComputers $domainComputers -s1Computers $SentinelOneList
-$result.MissingFromDomain | Where-Object { $_ } | ForEach-Object {
-    [PSCustomObject]@{
-        ComputerName = $_.ToString().Trim()
-        MissingFrom  = "Domain"
-    }
-} | Export-Csv "$workingdir\MissingInDomain.csv" -NoTypeInformation -Force
+$result = Compare-ComputerLists -rmmComputers $rmmComputers -s1Computers $SentinelOneList
 $result.MissingFromS1 | Where-Object { $_ } | ForEach-Object {
     [PSCustomObject]@{
         ComputerName = $_.ToString().Trim()
