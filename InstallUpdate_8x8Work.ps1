@@ -38,7 +38,7 @@ function PrepDirectory {
 
 function Install8x8 {
     Write-Output "$(Get-TimeStamp) Running installer..."
-    Start-Process msiexec.exe -ArgumentList "/i `"$msipath`" /norestart /passive /qb" -Wait # /qn not working atm, could be an issue with their package
+    Start-Process msiexec.exe -ArgumentList "/i `"$msipath`" /norestart /passive /qb" -Wait # Must be run as SYSTEM for slient install - /qn
 }
 
 # Checking for installed version
