@@ -1,82 +1,199 @@
 <#
 .SYNOPSIS
-    A demo script for managing pizza orders.
+    Pizza Order Management
 
 .DESCRIPTION
-    This script allows you to create, view, and remove pizza orders.
-    Each order includes a base, cheese type, and toppings. 
+    This script simulates a simple pizza ordering system.
+    You can create new orders, view details, update existing orders,
+    move orders through their status stages, or remove them from the queue.
 
 .PARAMETER Base
-    The pizza base. Valid options: Tomato, BBQ.
+    The pizza base for custom orders.
+    Valid options: Tomato, BBQ.
 
 .PARAMETER Cheese
-    The cheese option. Valid options: Cheese, Light Cheese.
+    The cheese option for custom orders.
+    Valid options: Cheese, Light Cheese.
 
 .PARAMETER Toppings
-    One or more toppings. Valid options: Pepperoni, Ham, Onion, Sausage, Peppers.
+    One or more toppings for custom orders.
+    Valid options: Pepperoni, Ham, Onion, Sausage, Peppers.
+
+.PARAMETER Premade
+    Creates a pre-set pizza.
+    Valid options: Classic, Outback, HamNCheese.
+
+.PARAMETER Customize
+    Adjusts premade pizzas.
+    Use Add<Name> or No<Name>, e.g. AddHam, NoOnion.
 
 .PARAMETER ShowOrder
     Displays a specific order by order number.
 
+.PARAMETER ShowAll
+    Displays all current orders in the queue.
+
+.PARAMETER NextOrder
+    Displays the next available (lowest order number) order.
+
 .PARAMETER RemoveOrder
     Removes a specific order by order number.
 
-.PARAMETER All
-    Lists all current orders, sorted by order number.
+.PARAMETER ProgressOrder
+    Advances an order through the workflow:
+    Preparing → OutForDelivery → Delivered.
 
-.PARAMETER NextOrder
-    Displays the next available (lowest number) order.
+.PARAMETER ChangeBase
+    Updates the base for an existing order. Used with OrderNumber.
+
+.PARAMETER ChangeCheese
+    Updates the cheese for an existing order. Used with OrderNumber.
+
+.PARAMETER ChangeToppings
+    Updates the toppings for an existing order. Used with OrderNumber.
+
+.PARAMETER OrderNumber
+    The order ID to apply updates to. Used to make Changes.
 
 .EXAMPLE
-    New-Order -Base Tomato -Cheese Cheese -Toppings Ham, Onion
-    Creates a new pizza order with tomato base, regular cheese, ham, and onion.
+    Order-Pizza -Base Tomato -Cheese Cheese -Toppings Ham, Onion
+    Creates a custom pizza with tomato base, cheese, ham, and onion.
+
+.EXAMPLE
+    Order-Pizza -Premade Classic
+    Creates a premade "Classic" pizza.
 
 .EXAMPLE
     Manage-Order -ShowOrder 2
     Displays order #2.
 
 .EXAMPLE
-    Manage-Order -RemoveOrder 3
-    Removes order #3.
+    Manage-Order -ShowAll
+    Displays all active orders.
 
 .EXAMPLE
-    Manage-Order -All
-    Displays all active orders.
+    Manage-Order -ProgressOrder 3
+    Advances order #3 to the next stage.
+
+.EXAMPLE
+    Manage-Order -OrderNumber 2 -ChangeCheese "Light Cheese"
+    Updates the cheese option for order #2.
 
 .NOTES
     Author: Christian Ito-Taylor
     Version: 1.0
-    Date:   2025-08-18
+    Date:   2025-08-21
 #>
 
-## Initialize the array for the orders list
+# Data store
 $Pizza = @{}
 
+# === Helper Functions === #
+function Show-Order {
+    [CmdletBinding()]
+    param(
+        [int]$ShowOrder,
+        [switch]$ShowAll,
+        [switch]$NextOrder
+    )
+
+    ## Show specified order number
+    if ($ShowOrder) {
+        if ($Pizza.ContainsKey($ShowOrder)) {
+            $Pizza[$ShowOrder]
+            return
+        }
+        else {
+            Write-Verbose "Lookup requested: Order #$ShowOrder"
+            Write-Error "Order #$ShowOrder not found."
+        }
+    } 
+    ## Show next order (lowest number)
+    if ($NextOrder) {
+        if (-not $Pizza -or $Pizza.Count -eq 0) { 
+            Write-Error "No orders yet."
+            return
+        }
+        ## Get lowest order # to show what to prep next
+        $Next = [int](($Pizza.Keys | Measure-Object -Minimum).Minimum)
+            
+        if ($Pizza.ContainsKey($Next)) {
+            $Pizza[$Next]
+            return
+        }
+        else {
+            Write-Error "No orders found."
+        }
+    }
+    ## Show all orders
+    elseif ($ShowAll) {
+        if ($Pizza.Count -gt 0) {
+            $Pizza.Values | Sort-Object OrderNumber | Format-Table -AutoSize
+        }
+        return
+    }
+    else {
+        Write-Error "No orders found."
+    }
+}
+function Move-Status {
+    [CmdletBinding()]
+    param(
+        [int]$Order
+    )
+    ## Move status to next type: Pending → Preparing → OutForDelivery → Delivered
+    switch ($Pizza[$ProgressOrder].OrderStatus) {
+        'Preparing' { $Pizza[$ProgressOrder].OrderStatus = 'OutForDelivery' }
+        'OutForDelivery' { $Pizza[$ProgressOrder].OrderStatus = 'Delivered' }
+        'Delivered' { Write-Output "Order #$ProgressOrder already delivered." }
+        default { $Pizza[$ProgressOrder].OrderStatus = 'Preparing' }
+    }
+    $Pizza[$ProgressOrder]
+}
+function Remove-Order {
+    [CmdletBinding()]
+    param([int]$Order)
+
+    ## Remove specified order from queue
+    if ($Pizza.ContainsKey([int]$RemoveOrder)) {
+        [void]$Pizza.Remove([int]$RemoveOrder)
+        "Order #$RemoveOrder has been removed from queue."
+    }
+    else {
+        Write-Error "Order #$RemoveOrder not found."
+    }
+}
+# === === #
+
+# === Main Functions === #
 function Order-Pizza {
     [CmdletBinding()]
     ## Give parameter set names so that you can't combine certian options
-    ## Also verifying only my set options can be set. Helps tab-finish as well.
+    ## Utilizing ValidateSet to verify only my set options will be accepted. Helps tab-finish as well, making it more user-friendly.
     param (
         [Parameter(Mandatory, ParameterSetName = 'Premade')]
-        #        [ValidateSet('Classic', 'Outback', IgnoreCase=$true)]      # Removing these so I can include more user input (not sure which way would be best).
+        [ValidateSet('Classic', 'Outback', 'HamNCheese', IgnoreCase = $true)]
         [string]$Premade,
 
+        [Parameter(ParameterSetName = 'Premade')]
+        [string[]]$Customize,
+
         [Parameter(Mandatory, ParameterSetName = 'Custom')]
-        #        [ValidateSet('Tomato', 'BBQ', IgnoreCase=$true)]
+        [ValidateSet('Tomato', 'BBQ', IgnoreCase = $true)]
         [string]$Base,
 
         [Parameter(Mandatory, ParameterSetName = 'Custom')]
-        #        [ValidateSet('Cheese', 'Light Cheese', IgnoreCase=$true)]
+        [ValidateSet('Cheese', 'Light Cheese', IgnoreCase = $true)]
         [string]$Cheese,
 
         [Parameter(ParameterSetName = 'Custom')]
-        #        [ValidateSet('Pepperoni', 'Ham', 'Onion', 'Sausage', 'Peppers', IgnoreCase=$true)]
+        [ValidateSet('Pepperoni', 'Ham', 'Onion', 'Sausage', 'Peppers', IgnoreCase = $true)]
         [string[]]$Toppings
     )
 
-    ## Shows what the user inputs
+    ## Shows what the user input
     Write-Verbose "ParamSet: $($PSCmdlet.ParameterSetName)"
-    
+
     # === Premade Za ===
     ## Creates the pre-made pizzas
     if ($Premade -eq "Classic") {
@@ -89,6 +206,35 @@ function Order-Pizza {
         $Cheese = "Cheese"
         $Toppings = @("Sausage", "Onion", "Peppers")
     }
+    elseif ($Premade -eq "HamNCheese") {
+        $Base = "Tomato"
+        $Cheese = "Cheese"
+        $Toppings = @("Ham", "Onion")
+    }
+    
+    ## Customize premade pizza
+    if ($PSCmdlet.ParameterSetName -eq 'Premade' -and $Customize) {
+        $mods = $Customize -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+
+        foreach ($m in $mods) {
+            # Regex cleaning
+            if ($m -match '^(?<Action>Add|No)(?<Name>.+)$') {
+                $name = $Matches['Name']
+
+                if ($Matches['Action'] -eq 'Add') {
+                    if ($name -notin $Toppings) { $Toppings += $name } # Add Topping
+                }
+                else {
+                    $Toppings = $Toppings | Where-Object { $_ -ne $name } # Remove Topping
+                }
+            }
+            else {
+                throw "Invalid customization '$m'. Use Add<Name> or No<Name> (e.g., AddOnion, NoPeppers)."
+            }
+        }
+        ## No duplicates!
+        $Toppings = $Toppings | Select-Object -Unique
+    }
     # ======
 
     # === Bases ===
@@ -97,7 +243,6 @@ function Order-Pizza {
     $Base = (Get-Culture).TextInfo.ToTitleCase($Base.ToLower())
 
     ## Validate options
-    #### *** Could get more specific with bbq, barbecue, BBQ
     $validBases = @('Tomato', 'BBQ')
     if ($Base -notin $validBases) {
         throw "Invalid base: '$Base'. Valid options are: $($validBases -join ', ')"
@@ -116,24 +261,6 @@ function Order-Pizza {
     }
     # ======
 
-    # === Toppings ===
-    ## Normalize inputs
-    $Toppings = 
-    $Toppings | 
-    Where-Object { $_ -ne $null -and $_.Trim() -ne '' } | 
-    ForEach-Object { (Get-Culture).TextInfo.ToTitleCase($_.Trim().ToLower()) }
-
-    ## Remove duplicates
-    $Toppings = $Toppings | Select-Object -Unique
-
-    ## Validate options
-    $validToppings = @('Pepperoni', 'Ham', 'Onion', 'Sausage', 'Peppers')
-    $invalid = $Toppings | Where-Object { $_ -notin $validToppings }
-    if ($invalid) {
-        throw "Invalid toppings: $($invalid -join ', '). Valid options: $($validToppings -join ', ')"
-    }
-    # ======
-
     # === Orders ===
     ## Assign an order number to each pizza
     if ($Pizza.Count -eq 0) {
@@ -142,6 +269,8 @@ function Order-Pizza {
     else {
         [int]$OrderNumber = ($Pizza.Keys | Measure-Object -Maximum).Maximum + 1
     }
+    ## Set initial order status
+    $OrderStatus = "Preparing"
     # ======
 
     ## Shows what was actually bound to params
@@ -150,6 +279,7 @@ function Order-Pizza {
 
     $Pizza[$OrderNumber] = [PSCustomObject]@{
         OrderNumber = $OrderNumber
+        OrderStatus = $OrderStatus
         Base        = $Base
         Cheese      = $Cheese
         Toppings    = $Toppings
@@ -157,8 +287,7 @@ function Order-Pizza {
 
     Write-Output "Your order is placed.`n"
     $Pizza[$OrderNumber]
-    ## Show objects stored
-    Write-Verbose ("New order object: " + ($Pizza[$OrderNumber] | ConvertTo-Json -Compress))
+    Write-Verbose ("New order object: " + ($Pizza[$OrderNumber] | ConvertTo-Json -Compress)) ## Show objects stored
 }
 
 function Manage-Order {
@@ -174,93 +303,42 @@ function Manage-Order {
         [int]$RemoveOrder,
 
         [Parameter(ParameterSetName = 'All')]
-        [switch]$ShowAll
+        [switch]$ShowAll,
+
+        [Parameter(ParameterSetName = 'Progress')]
+        [int]$ProgressOrder,
+
+        [Parameter(ParameterSetName = 'Update')]
+        [ValidateSet('Pepperoni', 'Ham', 'Onion', 'Sausage', 'Peppers')]
+        [string[]]$ChangeToppings,
+
+        [Parameter(ParameterSetName = 'Update')]
+        [ValidateSet('Tomato', 'BBQ')]
+        [string]$ChangeBase,
+
+        [Parameter(ParameterSetName = 'Update')]
+        [ValidateSet('Cheese', 'Light Cheese')]
+        [string]$ChangeCheese,
+
+        [Parameter(ParameterSetName = 'Update')]
+        [int]$OrderNumber
     )
 
-    ## Shows what the user input
-    Write-Verbose "ParamSet: $($PSCmdlet.ParameterSetName)"
-    ## Shows what was actually bound to params
-    Write-Verbose "Bound params: $($PSBoundParameters.Keys -join ', ')"
+    Write-Verbose "ParamSet: $($PSCmdlet.ParameterSetName)" ## Shows what the user input
+    Write-Verbose "Bound params: $($PSBoundParameters.Keys -join ', ')" ## Shows what was actually bound to params
 
-    # === Show ===
-    if ($PSCmdlet.ParameterSetName -eq 'Get') {
-        ## Show specified order number
-        if ($PSBoundParameters.ContainsKey('ShowOrder')) {
-            if ($Pizza.ContainsKey($ShowOrder)) {
-                $Pizza[$ShowOrder]
-                return
-            }
-            else {
-                Write-Verbose "Lookup requested: Order #$ShowOrder"
-                Write-Error "Order #$ShowOrder not found."
-            }
-        }
-        ## Show next order (lowest number)
-        if ($PSBoundParameters.ContainsKey('NextOrder')) {
-
-            if (-not $Pizza -or $Pizza.Count -eq 0) { 
-                Write-Error "No orders yet."
-                return
-            }
-            
-            ## Get lowest order #
-            $next = [int](($Pizza.Keys | Measure-Object -Minimum).Minimum)
-            
-            if ($Pizza.ContainsKey($Next)) {
-                $Pizza[$Next]
-                return
-            }
-            else {
-                Write-Error "No orders found."
-            }
+    ## Calling the helper functions
+    switch ($PSCmdlet.ParameterSetName) {
+        'Progress' { Move-Status -Order $ProgressOrder }
+        'Get' { Show-Order -ShowOrder $ShowOrder -NextOrder:$NextOrder }
+        'All' { Show-Order -ShowAll:$ShowAll }
+        'Delete' { Remove-Order -Order $RemoveOrder }
+        'Update' {
+            if ($ChangeBase) { $Pizza[$OrderNumber].Base = $ChangeBase }
+            if ($ChangeCheese) { $Pizza[$OrderNumber].Cheese = $ChangeCheese }
+            if ($ChangeToppings) { $Pizza[$OrderNumber].Toppings = $ChangeToppings }
+            $Pizza[$OrderNumber]
         }
     }
-    # ======
-
-    # === Delete ===
-    ## Remove specified order
-    if ($PSBoundParameters.ContainsKey('RemoveOrder')) {
-        if ($Pizza.ContainsKey($RemoveOrder)) {
-            [void]$Pizza.Remove([int]$RemoveOrder)
-        }
-        else {
-            Write-Verbose "Lookup requested: Order #$ShowOrder"
-            Write-Error "Order #$RemoveOrder not found."
-        }
-        return
-    }
-    # ======
-
-    # === Show All ===
-    ## Show all orders
-    if ($ShowAll) {
-        if ($Pizza.Count -gt 0) {
-            $Pizza.Values | Sort-Object OrderNumber | Format-Table -AutoSize
-        }
-        return
-    }
-    else {
-        Write-Error "No orders found."
-    }
-    # ======
-
-    ## Show what was actually bound to params
-    Write-Verbose "Bound params: $($PSBoundParameters.Keys -join ', ')"
 }
-
-<#  Test Runs
-
-Order-Pizza -Premade Classic
-Order-Pizza -Premade Outback -Cheese Cheese # Customizing premade should FAIL
-Order-Pizza -Base bbq -Cheese 'Light Cheese' -Toppings Ham, Pepperoni, Onion -verbose
-Order-Pizza -Base Tomato -Cheese 'Light Cheese' -Toppings Ham, Pep, Onion #Should FAIL - misspelled
-Order-Pizza -Base Tomato -Cheese 'Light Cheese' -Toppings Ham, Onion, Onion # Double topping should be OK
-
-Manage-Order -ShowAll -verbose
-Manage-Order -ShowOrder 4 -verbose
-Manage-Order -RemoveOrder 5000  # Should FAIL - not exist
-Manage-Order -NextOrder
-Manage-Order -ShowOrder 4 -All  # Should FAIL, incompat params
-Manage-Order -RemoveOrder 1
-Manage-Order -RemoveOrder 4
-#>
+# === === #
